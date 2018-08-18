@@ -5,13 +5,14 @@ Steam Workshop:
 
 ## Current Features:
 - Reliable packet delivery
+- Packet ordering
 - Packet resend timeout
 - Object-oriented approach
 - High level api
 
 ## Removed Features
 - Encryption
-  - Adds perofrmance overheads for little gain - interference is usually elliminated by using owner-only trusted communication
+  - Adds performance overheads for little gain - interference is usually elliminated by using owner-only trusted communication
 
 ## Required Blocks
 - Antenna(s) _set to trigger the associated Programmable Block_
@@ -19,7 +20,7 @@ Steam Workshop:
 
 ## API
 ### API.1 Code Setup
-Setup programmable block environment if the preferred code editor as usual, and copy [RTP4 source](https://github.com/OmgItsRito/se-rtp4/blob/master/src/RTP4.cs) as an internal static class.
+Setup programmable block environment in the preferred code editor as usual, and copy [RTP4 source](https://github.com/OmgItsRito/se-rtp4/blob/master/src/RTP4.cs) as an internal static class. When copying code into the programmable block [minifed version](https://github.com/OmgItsRito/se-rtp4/blob/master/programmable_block/RTP4.cs) can be used instead of the source to free up code space.
 
 ### API.2 Initialization
 Before using the transmission protocol it is necessary to initialize it:
@@ -30,20 +31,20 @@ Parameters:
 1. `IMyGridProgramRuntimeInfo runtime`
    * Runtime object for this Programmable Block, used for packet timing
 2. `IMyRadioAntenna[] antennas`
-   * Antennas array, must not contain `nulls` ans should have at least one working antenna
+   * Antennas array, must not contain `nulls` and should have at least one working antenna
 3. `MyTransmitTarget transmissionMode`
-   * Transmission mode for this protocol, valid flags: Owned, Ally, Enemy (or Everyone)
+   * Transmission mode for this protocol, valid flags: Owned, Ally, Enemy (same as Everyone)
 4. `string localName`
-   * Name of this connection platform
+   * Name identifier for this connection platform
 5. `int sendLimit`
-   * Maximal number of times packets will be attempted to be transmitted; min=1, default=5
-    * After running out of tries the connection will be shutdown
+   * Maximal number of times packets will be attempted to be (re-)transmitted; min=1, default=5
+   * After running out of tries the connection will be shutdown
 6. `int sendTimeoutMs`
-   * Amount of in-game milliseconds to wait before trying to re-send a packet; min=0, default=200
+   * Amount of in-game milliseconds to wait before trying to (re-)transmit a packet; min=0, default=200
 7. `Func<string, byte, bool> connectionAcceptor`
    * Delegate for handling incoming connection requests
      * parameter 0: [string] -> target name
-     * patameter 1: [byte] -> connection channel
+     * parameter 1: [byte] -> connection channel
      * return: [bool] -> `true` to accept the connection, `false` to reject
 8. `Action<IConnection> connectionListener`
    * Delegate for getting notifications about newly accepted connections, can be null
@@ -74,11 +75,11 @@ Parameters:
 2. `byte channel`
    * Connection channel to use, same concept as ports - connection identifier number between two platforms
 
-Return:
+Returns:
 - `RTP4.IConnection`
   * Connection object
 ### API.5 Accepting Connections
-If a platform invokes `OpenConnection` with the target name of the recieving platform, the `connectionAcceptor` delegate will be invoked immediately, and the returning value will decide whether the connection is opened or rejected.
+If a platform invokes `OpenConnection` with the target name of the recieving platform, the `connectionAcceptor` delegate will be invoked when the message is processed, and the returning value will decide whether the connection is opened or rejected. (See [Initialization](https://github.com/OmgItsRito/se-rtp4#API2-initialization))
 ### API.6 RTP4.IConnection Interface
 For any connection related operations the protocol api uses `RTP4.IConnection` objects.
 Properties:
@@ -89,11 +90,11 @@ Properties:
 - `Action OnOpen { get; set; }`
    - Invoked at most once, when the connection has been successfuly opened on both endpoints
 - `Action OnClose { get; set; }`
-   - Invoked at most once, when the connection has been closed for any reason, inclusing `Close()` invocation
+   - Invoked at most once, when the connection has been closed for any reason, including `Close()` invocation
 - `Action<string> OnData { get; set; }`
    - Invoked every time the connection recieves data, after the target platform has invoked `SendData(string)`
 - `bool IsOpen { get; }`
-   - Indocates whether the connection is opened
+   - Indicates whether the connection is opened
 
 Methods:
 - `void SendData(string data)`
