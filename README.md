@@ -20,7 +20,7 @@ Steam Workshop:
 
 ## API
 ### API.1 Code Setup
-Setup programmable block environment in the preferred code editor as usual, and copy [RTP4 source](https://github.com/OmgItsRito/se-rtp4/blob/master/src/RTP4.cs) as an internal static class. When copying code into the programmable block [minifed version](https://github.com/OmgItsRito/se-rtp4/blob/master/programmable_block/RTP4.cs) can be used instead of the source to free up code space.
+Setup programmable block environment in the preferred code editor as usual, and copy [RTP4 source](/src/RTP4.cs) as an internal static class. When copying code into the programmable block [minifed version](/programmable_block/RTP4.cs) can be used instead of the source to free up code space.
 
 ### API.2 Initialization
 Before using the transmission protocol it is necessary to initialize it:
@@ -79,7 +79,7 @@ Returns:
 - `RTP4.IConnection`
   * Connection object
 ### API.5 Accepting Connections
-If a platform invokes `OpenConnection` with the target name of the recieving platform, the `connectionAcceptor` delegate will be invoked when the message is processed, and the returning value will decide whether the connection is opened or rejected. (See [Initialization](https://github.com/OmgItsRito/se-rtp4#api2-initialization))
+If a platform invokes `OpenConnection` with the target name of the recieving platform, the `connectionAcceptor` delegate will be invoked when the message is processed, and the returning value will decide whether the connection is opened or rejected. (See [Initialization](#api2-initialization))
 ### API.6 RTP4.IConnection Interface
 For any connection related operations the protocol api uses `RTP4.IConnection` objects.
 Properties:
