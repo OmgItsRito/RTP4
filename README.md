@@ -40,7 +40,7 @@ Parameters:
    * Maximal number of times packets will be attempted to be (re-)transmitted; min=1, default=5
    * After running out of tries the connection will be shutdown
 6. `int sendTimeoutMs`
-   * Amount of in-game milliseconds to wait before trying to (re-)transmit a packet; min=0, default=200
+   * Amount of in-game milliseconds to wait before trying to (re-)transmit a packet; min=0, default=400
 7. `Func<string, byte, bool> connectionAcceptor`
    * Delegate for handling incoming connection requests
      * parameter 0: [string] -> target name
