@@ -98,7 +98,7 @@ Properties:
 
 Methods:
 - `void SendData(string data)`
-   * Queues up data to be sent to the target platform
+   * Queues up data to be sent to the target platform, only works if the connection is opened
      * Parameters:
        * `string data` - data to send
 - `void Close()`
