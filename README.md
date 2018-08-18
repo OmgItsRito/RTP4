@@ -98,8 +98,8 @@ Properties:
 
 Methods:
 - `void SendData(string data)`
-   - Queues up data to be sent to the target platform
-     - Parameters:
-     1. `string data` - data to send
+   * Queues up data to be sent to the target platform
+     * Parameters:
+       * `string data` - data to send
 - `void Close()`
    - Shuts down the connection immediately regardless of its state, has no effects if the connection has already been shutdown
