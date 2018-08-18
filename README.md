@@ -82,6 +82,7 @@ Returns:
 If a platform invokes `OpenConnection` with the target name of the recieving platform, the `connectionAcceptor` delegate will be invoked when the message is processed, and the returning value will decide whether the connection is opened or rejected. (See [Initialization](#api2-initialization))
 ### API.6 RTP4.IConnection Interface
 For any connection related operations the protocol api uses `RTP4.IConnection` objects.
+
 Properties:
 - `string Target { get; }`
    - Target platform identifier
