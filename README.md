@@ -4,7 +4,7 @@ Data transmission protocol api for Space Engineers programmable blocks.
 Steam Workshop: https://steamcommunity.com/sharedfiles/filedetails/?id=1484432466
 
 ## Current Features:
-- Reliable packet delivery
+- Reliable & Unreliable packet delivery
 - Packet ordering
 - Packet resend timeout
 - Object-oriented approach
@@ -25,7 +25,7 @@ Setup programmable block environment in the preferred code editor as usual, and 
 ### API.2 Initialization
 Before using the transmission protocol it is necessary to initialize it:
 ```javascript
-void RTP4.Initialize(IMyGridProgramRuntimeInfo runtime, IMyRadioAntenna[] antennas, MyTransmitTarget transmissionMode, string localName, int sendLimit, int sendTimeoutMs, Func<string, byte, bool> connectionAcceptor, Action<IConnection> connectionListener)
+void RTP4.Initialize(IMyGridProgramRuntimeInfo runtime, IMyRadioAntenna[] antennas, MyTransmitTarget transmissionMode, string localName, int sendLimit = 5, int sendTimeoutMs = 400, Func<string, byte, bool> connectionAcceptor = null, Action<IConnection> connectionListener = null)
 ```
 Parameters:
 1. `IMyGridProgramRuntimeInfo runtime`
@@ -35,18 +35,18 @@ Parameters:
 3. `MyTransmitTarget transmissionMode`
    * Transmission mode for this protocol, valid flags: Owned, Ally, Enemy (same as Everyone)
 4. `string localName`
-   * Name identifier for this connection platform
-5. `int sendLimit`
+   * Name identifier for this connection platform, length between 1 and 99 characters
+5. `int sendLimit [ = 5 ]`
    * Maximal number of times packets will be attempted to be (re-)transmitted; min=1, default=5
    * After running out of tries the connection will be shutdown
-6. `int sendTimeoutMs`
+6. `int sendTimeoutMs [ = 400 ]`
    * Amount of in-game milliseconds to wait before trying to (re-)transmit a packet; min=0, default=400
-7. `Func<string, byte, bool> connectionAcceptor`
-   * Delegate for handling incoming connection requests
+7. `Func<string, byte, bool> connectionAcceptor [ = null ]`
+   * Delegate for handling incoming connection requests, null means rejecting everything
      * parameter 0: [string] -> target name
      * parameter 1: [byte] -> connection channel
      * return: [bool] -> `true` to accept the connection, `false` to reject
-8. `Action<IConnection> connectionListener`
+8. `Action<IConnection> connectionListener [ = null ]`
    * Delegate for getting notifications about newly accepted connections, can be null
      * parameter 0: [RTP4.IConnection] -> connection object that has just been accepted
 ### API.3 Maintaining Protocol
@@ -71,7 +71,7 @@ RTP4.IConnection RTP4.OpenConnection(string targetID, byte channel)
 ```
 Parameters:
 1. `string targetID`
-   * Target name identifier - `localName` used in the initialization method
+   * Target name identifier - `localName` used in the initialization method, length between 1 and 99 characters
 2. `byte channel`
    * Connection channel to use, same concept as ports - connection identifier number between two platforms
 
@@ -96,11 +96,17 @@ Properties:
    - Invoked every time the connection recieves data, after the target platform has invoked `SendData(string)`
 - `bool IsOpen { get; }`
    - Indicates whether the connection is opened
+- `int DataQueueLength { get; }`
+   - Gets the amount of queued messages
 
 Methods:
-- `void SendData(string data)`
+- `void SendData(string data, bool reliable = true)`
    * Queues up data to be sent to the target platform, only works if the connection is opened
      * Parameters:
        * `string data` - data to send
+       * `bool reliable` - whether to track & ensure packet delivery
 - `void Close()`
    - Shuts down the connection immediately regardless of its state, has no effects if the connection has already been shutdown
+- `void GetQueuedData(List<string> dataList)`
+   - Gets the currently unsent data, can be called after the connection has been closed to retrieve any data that could not be transmitted
+   - Currently an untested code, may throw exceptions
