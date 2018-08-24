@@ -109,4 +109,124 @@ Methods:
    - Shuts down the connection immediately regardless of its state, has no effects if the connection has already been shutdown
 - `void GetQueuedData(List<string> dataList)`
    - Gets the currently unsent data, can be called after the connection has been closed to retrieve any data that could not be transmitted
-   - Currently an untested code, may throw exceptions
+   - Currently untested code, may throw exceptions
+
+## Protocol Theory
+This section contains detailed explanation on how the protocol works internally. Knowing this is completely optional and is not required to be able to effectively use the exposed api controls.
+
+### 1. Protocol Modules
+The protocol is managed by three main modules which carry out tasks of message management (storing, dispatching) and data tracking (detecting that data is delivered or not).
+
+#### 1.2 Static Connection (StaticConnection)
+This object is responsible for dispatching (at the moment) only connection shutdown messages. After `IConnection.Close()` method is invoked the connection is marked as closed, all its internal states are cleared and the static connection enqueues the shutdown message for that connection's target.
+
+SCO is always stored in the `RTP4.m_connection` static list at index 0.
+
+Packet Sending: Dumps maximal amount of enqueued packets
+
+#### 1.3 Connection Instance (ConnectionImpl)
+This is the class that implements `IConnection` interface and exposes the related properties. As well as that it stores all related state information: packet tracking numbers (outgoing & incoming) and connection state (pending, open, closed).
+The class extends `StaticConnection` to inherit the `m_dataPackets` list, and defines its own `m_callbackPackets` list.
+
+Packet Sending: Sends at most one enqueued packet, and dumps maximal amount of callback packets.
+
+#### 1.4 Packet Instance (Packet)
+##### Packet Tracking
+Most packets will have a uid number (Unique Identifier, which is not always unique).
+
+This number is used during the packet parsing to ensure that the target connection has not received this packet before. In this case the uid acts as a packet tracking number.
+
+Packets can also be sent without tracking, in which case they will be only dispatched once and then be removed from the queue without waiting (or expecting) any recieve confirmation callback from the target.
+
+In other cases it is used a packet type identifier (most system messages have uid = 1).
+
+Packet numbers are always stored as three digits, and once the number reaches 999, the next uid is looped back to 100.
+
+##### Packet Types
+There is only one packet class, yet there are several different types of packets which are treated differently by the connections and by packet management logic.
+
+- System Packet
+  - Usually carry system related information such as connection initialization procedure messages
+  - Most of system messages have a uid value of 1 except for the shutdown message, which uses a tracked uid
+- Data Packet
+  - Used for transmitting tracked & untracked packets of custom data
+- Callback Packet
+  - Contains the uid of a packet which was delivered
+
+##### Packet Structure
+Each packet contains the sender & target ids, channel id and the packet data.
+
+Each packet has the same header which contains sender, target and channel ids.
+
+Packet Header: \[packet length]\[target length]\[target]\[sender length]\[sender]\[channel]\[uid]
+- `packet length` - \[3 digits] total length of the packet, used as the error detection value during parsing
+- `target length` - \[2 digits] length of the target name id
+- `target` - \[determined by `target length`] target id, the reciever of this packet
+- `sender length` - \[2 digits] length of the sender name id
+- `sender` - \[determined by `sender length`] sender id, the sender of this packet
+- `channel` - \[3 digits] channel of this connection between the two platforms
+- `uid` - \[3 digits] identification number of this packet
+
+After the packet header the packet is encoded differently based on the type.
+
+System Packet Body: { Header }\[msg]
+- `msg` - \[1 char] system message
+
+Data Packet Body: { Header }\[msg]\[data]
+- `msg` - \[1 char] system message, always `Packet.msg_data` for data packets
+- `data` - \[determined by packet length] sent data, substring of the leading index and the ending index of this packet
+
+Callback Packet Body: { Header }\[callback uid]
+- `callback uid` - \[3 digits] recieved packet uid
+- callback packets always have packet uid = 0
+
+### 2. Protocol Flow
+This section contains explanation on the process flow of the protocol. The following explanation is valid when the code is properly setup, that is the `RTP4.OnAntennaMessage` and `RTP4.StaticUpdate` methods are called at their appropriate times.
+
+#### Packet Flow
+##### Untracked Packets
+Untracked packets are enqueued in the connection data queue and then transmitted one by one. No callback is sent by the target upon the arrival. This is a best-case-scenario arrival.
+
+These packets always have uid = 50.
+
+##### Tracked Packets
+Tracked packets are also enqueued in the connection data queue of a connection, and transmitted one by one.
+However, these packets are retransmitted again and again with the specified re-send delay, and up to the specified amount of times, after which the connection is shutdown.
+
+During this process the connection may recieve a callback packet, which will contain a uid of a recieved packet. If the uid specified by the callback matches the uid of the currently enqueued and re-transmitted packet, the data packet is removed - it has successfully reached its destination (in theory).
+
+#### Connection Initialization
+In this scenario the connection initializer is A and target is B.
+1. After the a new connection has been requested on platform A (`RTP4.OpenConnection`) it is added to the `RTP4.m_connections` list. At the same time it will enqueue a tracked `Packet.msg_sys_RequestOpen` message.
+2. Platform B recieves the `Packet.msg_sys_RequestOpen` message:
+   - \[If connection doesnt exist] Initialize a new connection object with the sender details (TargetID and Channel)
+   - Enqueue a tracked `Packet.msg_sys_ConfirmOpen` message.
+3. Platform A recieves `Packet.msg_sys_ConfirmOpen`:
+   - If the connection is in pending state:
+     - Clears all packets from `m_dataPackets`
+     - Appends untracked `Packet.msg_sys_OpenHandshake` message to the `m_dataPackets` list
+     - Sets connection state to open
+     - Invokes `OnOpen` delegate if not null
+   - If the connection is opened:
+     - Prepends untracked `Packet.msg_sys_OpenHandshake` message to the beginning of `m_dataPackets` list
+4. Platform B recieves `Packet.msg_sys_OpenHandshake` message, if the connection state is pending:
+   - Clears all packets from `m_dataPackets`
+   - Sets connection state to open
+   - Invokes `OnOpen` delegate if not null
+
+#### Tracked Packet Flow
+In this scenario the sender is A and target is B.
+1. A enqueues a data packet with the next packet uid in the count.
+2. B recieves the data packet:
+   - If the packet uid macthes the next expected uid:
+     - Increment next expected uid
+     - Invoke `OnData` delegate if not null
+   - In any case:
+     - Enqueue callback message with the uid of the recieved packet
+3. A recieves the callback with the target packet uid and, if that matches the uid of the originally send data packet, it is removed.
+
+#### Connection Shutdown
+When a connection is shutdown for any reason:
+1. Connection is cleaned up (nulled out) and marked as closed.
+2. Removed from `RTP4.m_connections` list.
+3. Static Connection enqueues an untracked (but with the valid uid) shutdown message with the signature of the shutdown connection.
