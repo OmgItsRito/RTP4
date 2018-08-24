@@ -3,6 +3,37 @@ Data transmission protocol api for Space Engineers programmable blocks.
 
 Steam Workshop: https://steamcommunity.com/sharedfiles/filedetails/?id=1484432466
 
+<details><summary><b>Contents</b></summary>
+<a>
+
+- [Current Features](#current-features)
+- [Removed Features](#removed-features)
+- [API](#api)
+  - [Code Setup](#api1-code-setup)
+  - [Initialization](#api2-initialization)
+  - [Maintaining Protocol](#api3-maintaining-protocol)
+    - [Packet Listening](#32-packet-listening-antenna-messages)
+    - [Packet Dispatching](#32-packet-dispatching-static-updates)
+  - [Opening Connections](#api4-opening-connections)
+  - [Accepting Connections](#api5-accepting-connections)
+  - [IConnection Interface](#api6-rtp4iconnection-interface)
+- [Protocol Theory](#protocol-theory)
+  - [Protocol Modules](#1-protocol-modules)
+    - [Static Connection](#11-static-connection-staticconnection)
+    - [Connection Instance](#12-connection-instance-connectionimpl)
+      - [Packet Tracking](#packet-tracking)
+      - [Packet Types](#packet-types)
+      - [Packet Structure](#packet-structure)
+  - [Protocol Flow](#2-protocol-flow)
+    - [Packet Flow](#21-packet-flow)
+      - [Untracked Packets](#untracked-packets)
+      - [Tracked Packets](#tracked-packets)
+    - [Connection Initialization](#22-connection-initialization)
+    - [Tracked Packet Flow](#23-tracked-packet-flow)
+    - [Connection Shutdown](#24-connection-shutdown)
+</a>
+</details>
+
 ## Current Features:
 - Reliable & Unreliable packet delivery
 - Packet ordering
@@ -117,20 +148,20 @@ This section contains detailed explanation on how the protocol works internally.
 ### 1. Protocol Modules
 The protocol is managed by three main modules which carry out tasks of message management (storing, dispatching) and data tracking (detecting that data is delivered or not).
 
-#### 1.2 Static Connection (StaticConnection)
+#### 1.1 Static Connection (StaticConnection)
 This object is responsible for dispatching (at the moment) only connection shutdown messages. After `IConnection.Close()` method is invoked the connection is marked as closed, all its internal states are cleared and the static connection enqueues the shutdown message for that connection's target.
 
 SCO is always stored in the `RTP4.m_connection` static list at index 0.
 
 Packet Sending: Dumps maximal amount of enqueued packets
 
-#### 1.3 Connection Instance (ConnectionImpl)
+#### 1.2 Connection Instance (ConnectionImpl)
 This is the class that implements `IConnection` interface and exposes the related properties. As well as that it stores all related state information: packet tracking numbers (outgoing & incoming) and connection state (pending, open, closed).
 The class extends `StaticConnection` to inherit the `m_dataPackets` list, and defines its own `m_callbackPackets` list.
 
 Packet Sending: Sends at most one enqueued packet, and dumps maximal amount of callback packets.
 
-#### 1.4 Packet Instance (Packet)
+#### 1.3 Packet Instance (Packet)
 ##### Packet Tracking
 Most packets will have a uid number (Unique Identifier, which is not always unique).
 
@@ -183,7 +214,7 @@ Callback Packet Body: { Header }\[callback uid]
 ### 2. Protocol Flow
 This section contains explanation on the process flow of the protocol. The following explanation is valid when the code is properly setup, that is the `RTP4.OnAntennaMessage` and `RTP4.StaticUpdate` methods are called at their appropriate times.
 
-#### Packet Flow
+#### 2.1 Packet Flow
 ##### Untracked Packets
 Untracked packets are enqueued in the connection data queue and then transmitted one by one. No callback is sent by the target upon the arrival. This is a best-case-scenario arrival.
 
@@ -195,7 +226,7 @@ However, these packets are retransmitted again and again with the specified re-s
 
 During this process the connection may recieve a callback packet, which will contain a uid of a recieved packet. If the uid specified by the callback matches the uid of the currently enqueued and re-transmitted packet, the data packet is removed - it has successfully reached its destination (in theory).
 
-#### Connection Initialization
+#### 2.2 Connection Initialization
 In this scenario the connection initializer is A and target is B.
 1. After the a new connection has been requested on platform A (`RTP4.OpenConnection`) it is added to the `RTP4.m_connections` list. At the same time it will enqueue a tracked `Packet.msg_sys_RequestOpen` message.
 2. Platform B recieves the `Packet.msg_sys_RequestOpen` message:
@@ -214,7 +245,7 @@ In this scenario the connection initializer is A and target is B.
    - Sets connection state to open
    - Invokes `OnOpen` delegate if not null
 
-#### Tracked Packet Flow
+#### 2.3 Tracked Packet Flow
 In this scenario the sender is A and target is B.
 1. A enqueues a data packet with the next packet uid in the count.
 2. B recieves the data packet:
@@ -225,7 +256,7 @@ In this scenario the sender is A and target is B.
      - Enqueue callback message with the uid of the recieved packet
 3. A recieves the callback with the target packet uid and, if that matches the uid of the originally send data packet, it is removed.
 
-#### Connection Shutdown
+#### 2.4 Connection Shutdown
 When a connection is shutdown for any reason:
 1. Connection is cleaned up (nulled out) and marked as closed.
 2. Removed from `RTP4.m_connections` list.
