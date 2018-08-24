@@ -12,7 +12,7 @@ public static class RTP4 {
     static Action<IConnection> m_connectionListener;
 
     static string m_localID;
-    static int m_localIDLength;
+    static string m_localIDLength;
 
     static long CurrentTime;// used for packet timing, must be kept internally updated to ensure consistency with the in-game time
 
@@ -32,17 +32,16 @@ public static class RTP4 {
     /// <param name="runtime">runtime object</param>
     /// <param name="antennas">antennas array</param>
     /// <param name="transmissionMode">transmission mode</param>
-    /// <param name="localName">local id, must be between 1 and 9 characters long</param>
-    /// <param name="sendLimit">send limit per packet, if a packet is attempted to be sent more than this value, the associated connection is terminated[default=5]</param>
-    /// <param name="sendTimeoutMs">time to wait between attempting packet retransmission[default=200]</param>
-    /// <param name="connectionAcceptor">connection acceptor delegate, decides whether to accept and incoming connection request</param>
-    /// <param name="connectionListener">connection listener delegate, invoked when a new connection has been accepted</param>
-    public static void Initialize(IMyGridProgramRuntimeInfo runtime, IMyRadioAntenna[] antennas, MyTransmitTarget transmissionMode, string localName, int sendLimit, int sendTimeoutMs, Func<string, byte, bool> connectionAcceptor, Action<IConnection> connectionListener) {
+    /// <param name="localName">local id, must be between 1 and 99 characters long</param>
+    /// <param name="sendLimit">send limit per packet, if a packet is attempted to be sent more than this value, the associated connection is terminated [default=5]</param>
+    /// <param name="sendTimeoutMs">time to wait between attempting packet retransmission [default=400]</param>
+    /// <param name="connectionAcceptor">connection acceptor delegate, decides whether to accept an incoming connection request, null causes any such connections to be rejected</param>
+    /// <param name="connectionListener">connection listener delegate, invoked when a new connection has been accepted, can be null</param>
+    public static void Initialize(IMyGridProgramRuntimeInfo runtime, IMyRadioAntenna[] antennas, MyTransmitTarget transmissionMode, string localName, int sendLimit = 5, int sendTimeoutMs = 400, Func<string, byte, bool> connectionAcceptor = null, Action<IConnection> connectionListener = null) {
         if (m_connections == null) {
             if (runtime == null) { throw new Exception("runtime can not be null"); }
             if (antennas == null || antennas.Length == 0) { throw new Exception("antennas can not be null or have length of 0"); }
-            if (localName == null || localName.Length <= 0 || localName.Length > 9) { throw new Exception("localName length must be between 1 and 9 inclusive"); }
-            if (connectionAcceptor == null) { throw new Exception("connectionAcceptor delegate can not be null"); }
+            if (localName == null || localName.Length <= 0 || localName.Length > 99) { throw new Exception("localName length must be between 1 and 9 inclusive"); }
 
             m_runtime = runtime;
             m_antennas = (IMyRadioAntenna[])antennas.Clone();
@@ -55,7 +54,7 @@ public static class RTP4 {
             m_connections = new List<StaticConnection>();
             m_connections.Add(new StaticConnection());
             m_transmissionMode = transmissionMode;
-            m_localIDLength = m_localID.Length;
+            m_localIDLength = m_localID.Length.ToString("00");
             CurrentTime = sendTimeoutMs * 3;// just an arbitrary value above 0
 
             for (int i = 0, l = m_antennas.Length; i < l; i++) {
@@ -125,11 +124,11 @@ public static class RTP4 {
     /// <summary>
     /// Attempts to open a new connection witht the given id and channel. If there is already an existing connection witht the same signature, null is returned.
     /// </summary>
-    /// <param name="targetID">endpoint target id, must be between 1 and 9 characters</param>
+    /// <param name="targetID">endpoint target id, must be between 1 and 99 characters</param>
     /// <param name="channel">connection channel</param>
-    /// <returns></returns>
+    /// <returns>New connection object</returns>
     public static IConnection OpenConnection(string targetID, byte channel) {
-        if (targetID == null || targetID.Length <= 0 || targetID.Length > 9) { return null; }// validate target id
+        if (targetID == null || targetID.Length <= 0 || targetID.Length > 99) { return null; }// validate target id
         if (GetExistingConnection(targetID, channel) == null) {// check if there is existing connection with the provided signature
             ConnectionImpl c = new ConnectionImpl();// init new connection
             c.m_target = targetID;
@@ -146,7 +145,7 @@ public static class RTP4 {
     /// </summary>
     /// <param name="targetID">endpoint target id</param>
     /// <param name="channel">connection channel</param>
-    /// <returns></returns>
+    /// <returns>Existing connection object</returns>
     public static IConnection GetExistingConnection(string targetID, byte channel) {
         for (int i = 1, l = m_connections.Count; i < l; i++) {// iterate over connections, skipping static (first)
             ConnectionImpl c = m_connections[i] as ConnectionImpl;
@@ -207,15 +206,28 @@ public static class RTP4 {
         bool IsOpen { get; }
 
         /// <summary>
-        /// Attempts to transmit data to the target endpoint, this connection must be opened.
+        /// Gets the number of data packets queued for sending on this connection
+        /// </summary>
+        int DataQueueLength { get; }
+
+        /// <summary>
+        /// Attempts to transmit data (length: [0, 850]) to the target endpoint, this connection must be opened
         /// </summary>
         /// <param name="data">data to transmit</param>
-        void SendData(string data);
+        /// <param name="reliable">whether to ensure delivery</param>
+        void SendData(string data, bool reliable = true);
 
         /// <summary>
         /// Closes this connection, note that OnClose delegate will be invoked during the invocation of this method
         /// </summary>
         void Close();
+
+        /// <summary>
+        /// Retrieves any unsent or unconfirmed data that is still queued up in this connection in FIFO order
+        /// </summary>
+        /// <param name="dataList">list into which to add data</param>
+        [Obsolete("Untested Code")]
+        void GetQueuedData(List<string> dataList);
     }
 
     /// <summary>
@@ -272,6 +284,19 @@ public static class RTP4 {
 
         public bool IsOpen { get { return state == state_open; } }
 
+        public int DataQueueLength {
+            get {
+                LinkedListNode<Packet> node = m_dataPackets.First;
+                int l = 0, uid;
+                while (node != null && node != m_dataPackets.First) {
+                    uid = node.Value.packetUID;
+                    if (uid >= 100 || uid == 50) { l++; }
+                    node = node.Next;
+                }
+                return l;
+            }
+        }
+
         public int NextPacketUID { get { return ++lastSentPacketUID >= 1000 ? (lastSentPacketUID = 100) : lastSentPacketUID; } }// tracks packet ids
         int lastSentPacketUID = 99;// will get incremented to 100 and returned in the 1st operation
 
@@ -291,9 +316,7 @@ public static class RTP4 {
 
         public void InternalClose() {
             m_connections.Remove(this);// remove from the global connections list
-            m_dataPackets.Clear();// clear the lists & aggressively null them out, faster gc
             m_callbackPackets.Clear();
-            m_dataPackets = null;
             m_callbackPackets = null;
 
             state = state_closed;
@@ -305,11 +328,31 @@ public static class RTP4 {
             OnData = null;
         }
 
-        public void SendData(string data) {
+        public void SendData(string data, bool reliable) {
             if (state == state_open) {// guard state
-                if (data == null) { data = ""; } else if (data.Length > 900) { return; }// ensure data validity
-                m_dataPackets.AddLast(Packet.NewDataPacket(this, data, NextPacketUID));// queue data packet
+                if (data == null) { data = ""; } else if (data.Length > 850) { return; }// ensure data validity
+                if (reliable) {
+                    m_dataPackets.AddLast(Packet.NewDataPacket(this, data, NextPacketUID, OnFailedDataPacket));
+                } else {
+                    m_dataPackets.AddLast(Packet.NewDataPacket(this, data, 50, RemoveDataPacket));
+                }
             }
+        }
+
+        /// <summary>
+        /// Gets unsent data; unrevised, untested & possibly broken code
+        /// </summary>
+        /// <param name="dataList">list to add data to</param>
+        public void GetQueuedData(List<string> dataList) {
+            dataList.EnsureCapacity(dataList.Count + m_dataPackets.Count);
+            LinkedListNode<Packet> node = m_dataPackets.First;
+            do {
+                string data = node.Value.packetData;
+                int a = int.Parse(data.Substring(3, 2));
+                a = 3 + 2 + a + 2 + m_localID.Length + 3 + 3 + 1;
+                dataList.Add(data.Substring(a, data.Length - a));
+                node = node.Next;
+            } while (node != m_dataPackets.First);
         }
 
         public override void GetNextPackets(ref List<Packet> packets, ref int messageLength) {
@@ -364,20 +407,20 @@ public static class RTP4 {
             Packet p = new Packet();
             p.packetUID = packetUID;
             p.m_sendsLeft = m_sendLimit;
-            string data = targetId.Length + targetId + m_localIDLength + m_localID + channel.ToString("000") + packetUID.ToString("000") + msg;
+            string data = targetId.Length.ToString("00") + targetId + m_localIDLength + m_localID + channel.ToString("000") + packetUID.ToString("000") + msg;
             p.packetData = string.Concat(data.Length.ToString("000"), data);
             p.OnTransmissionFailure = onTransmissionFailure;
             return p;
         }
 
         // [packet length]000 [target length]0 [target]a- [sender length]0 [sender]a- [channel]000 [packet uuid]000 msg_data [msg]a-
-        public static Packet NewDataPacket(ConnectionImpl target, string msg, int packetUID) {
+        public static Packet NewDataPacket(ConnectionImpl target, string msg, int packetUID, Action<Packet> onTransmissionFailure) {
             Packet p = new Packet();
             p.packetUID = packetUID;
             p.m_sendsLeft = m_sendLimit;
-            string data = target.m_target.Length + target.m_target + m_localIDLength + m_localID + target.m_channel.ToString("000") + packetUID.ToString("000") + msg_data + msg;
+            string data = target.m_target.Length.ToString("00") + target.m_target + m_localIDLength + m_localID + target.m_channel.ToString("000") + packetUID.ToString("000") + msg_data + msg;
             p.packetData = string.Concat(data.Length.ToString("000"), data);
-            p.OnTransmissionFailure = target.OnFailedDataPacket;
+            p.OnTransmissionFailure = onTransmissionFailure;
             return p;
         }
 
@@ -385,7 +428,7 @@ public static class RTP4 {
         public static Packet NewCallbackPacket(ConnectionImpl target, int callbackPacketUID) {
             Packet p = new Packet();
             p.packetUID = 0;
-            string data = target.m_target.Length + target.m_target + m_localIDLength + m_localID + target.m_channel.ToString("000") + "000" + callbackPacketUID.ToString("000");
+            string data = target.m_target.Length.ToString("00") + target.m_target + m_localIDLength + m_localID + target.m_channel.ToString("000") + "000" + callbackPacketUID.ToString("000");
             p.packetData = string.Concat(data.Length.ToString("000"), data);
             p.OnTransmissionFailure = target.OnCallbackPacketSent;
             return p;
@@ -397,29 +440,31 @@ public static class RTP4 {
         /// <param name="msg">bulk message</param>
         /// <param name="dataStart">packet start (without packet length)</param>
         /// <param name="length">packet length relative to the msg</param>
-        /// <returns></returns>
+        /// <returns>True if packet was parsable, false if corrupted</returns>
         public static bool ProcessPacketData(string msg, int dataStart, int length) {
-            int tmpInt, dataStart0 = dataStart;
+            int tmpInt;
             string tmpString;
 
-            if (dataStart0 + 1 < length && int.TryParse(msg[dataStart0++].ToString(), out tmpInt)) {// target length
-                if (dataStart0 + tmpInt < length) {
-                    tmpString = msg.Substring(dataStart0, tmpInt);
+            if (dataStart + 2 < length && int.TryParse(msg.Substring(dataStart, 2).ToString(), out tmpInt)) {// target length
+                dataStart += 2;
+                if (dataStart + tmpInt < length) {
+                    tmpString = msg.Substring(dataStart, tmpInt);
                     if (tmpString == m_localID) {// target
-                        dataStart0 += tmpInt;
-                        if (dataStart0 + 1 < length && int.TryParse(msg[dataStart0++].ToString(), out tmpInt)) {// sender length
-                            if (dataStart0 + tmpInt < length) {
-                                tmpString = msg.Substring(dataStart0, tmpInt);// sender
-                                dataStart0 += tmpInt;
+                        dataStart += tmpInt;
+                        if (dataStart + 2 < length && int.TryParse(msg.Substring(dataStart, 2).ToString(), out tmpInt)) {// sender length
+                            dataStart += 2;
+                            if (dataStart + tmpInt < length) {
+                                tmpString = msg.Substring(dataStart, tmpInt);// sender
+                                dataStart += tmpInt;
                                 byte channel;
-                                if (dataStart0 + 3 < length && byte.TryParse(msg.Substring(dataStart0, 3), out channel)) {// channel
-                                    dataStart0 += 3;
-                                    if (dataStart0 + 3 < length && int.TryParse(msg.Substring(dataStart0, 3), out tmpInt)) {// packet uid
-                                        dataStart0 += 3;
-                                        ConnectionImpl c = GetExistingConnection(tmpString, channel) as ConnectionImpl;
+                                if (dataStart + 3 < length && byte.TryParse(msg.Substring(dataStart, 3), out channel)) {// channel
+                                    dataStart += 3;
+                                    if (dataStart + 3 < length && int.TryParse(msg.Substring(dataStart, 3), out tmpInt)) {// packet uid
+                                        dataStart += 3;
                                         if (tmpInt == 0) {
+                                            ConnectionImpl c = GetExistingConnection(tmpString, channel) as ConnectionImpl;
                                             if (c != null) {
-                                                if (dataStart0 + 3 <= length && int.TryParse(msg.Substring(dataStart0, 3), out tmpInt)) {// callback uid
+                                                if (dataStart + 3 <= length && int.TryParse(msg.Substring(dataStart, 3), out tmpInt)) {// callback uid
                                                     LinkedListNode<Packet> node = c.m_dataPackets.First;
                                                     if (node.Value.packetUID == tmpInt) {
                                                         c.m_dataPackets.RemoveFirst();
@@ -433,11 +478,12 @@ public static class RTP4 {
                                                     }
                                                 } else { return false; }
                                             }
-                                        } else if (dataStart0 < length) {
-                                            char packetType = msg[dataStart0++];
+                                        } else if (dataStart < length) {
+                                            char packetType = msg[dataStart++];
+                                            ConnectionImpl c = GetExistingConnection(tmpString, channel) as ConnectionImpl;
                                             if (c == null) {
                                                 if (packetType == msg_sys_RequestOpen) {
-                                                    if (m_connectionAcceptor.Invoke(tmpString, channel)) {
+                                                    if (m_connectionAcceptor != null && m_connectionAcceptor.Invoke(tmpString, channel)) {
                                                         c = new ConnectionImpl();
                                                         c.m_target = tmpString;
                                                         c.m_channel = channel;
@@ -452,18 +498,18 @@ public static class RTP4 {
                                                 }
                                             } else {
                                                 if (packetType == msg_data) {
-                                                    if (tmpInt >= 100 && c.state == ConnectionImpl.state_open) {
-                                                        if (c.nextExpectedPacketUID == tmpInt) {
-                                                            if (++c.nextExpectedPacketUID > 999) { c.nextExpectedPacketUID = 100; }
-                                                            int l = length - dataStart0;
+                                                    if (c.state == ConnectionImpl.state_open) {
+                                                        if (tmpInt == 50 || c.nextExpectedPacketUID == tmpInt) {
+                                                            if (tmpInt != 50) { if (++c.nextExpectedPacketUID > 999) { c.nextExpectedPacketUID = 100; } }
+                                                            int l = length - dataStart;
                                                             if (l < 0) { return false; }
                                                             if (l == 0) {
                                                                 if (c.OnData != null) { c.OnData.Invoke(""); }
-                                                            } else if (dataStart0 + l <= length) {
-                                                                if (c.OnData != null) { c.OnData.Invoke(msg.Substring(dataStart0, l)); }
+                                                            } else if (dataStart + l <= length) {
+                                                                if (c.OnData != null) { c.OnData.Invoke(msg.Substring(dataStart, l)); }
                                                             } else { return false; }
                                                         }
-                                                        c.m_callbackPackets.Add(NewCallbackPacket(c, tmpInt));
+                                                        if (tmpInt >= 100) { c.m_callbackPackets.Add(NewCallbackPacket(c, tmpInt)); }
                                                     }
                                                 } else if (packetType == msg_sys_RequestOpen) {
                                                     if (c.state == ConnectionImpl.state_pending) {
@@ -473,11 +519,13 @@ public static class RTP4 {
                                                 } else if (packetType == msg_sys_ConfirmOpen) {
                                                     Packet p = NewSysPacket(tmpString, channel, msg_sys_OpenHandshake, 1, c.RemoveDataPacket);
                                                     p.m_sendsLeft = 1;
-                                                    c.m_dataPackets.AddLast(p);
                                                     if (c.state == ConnectionImpl.state_pending) {
                                                         c.m_dataPackets.Clear();
+                                                        c.m_dataPackets.AddLast(p);
                                                         c.state = ConnectionImpl.state_open;
                                                         if (c.OnOpen != null) { c.OnOpen.Invoke(); }
+                                                    } else {
+                                                        c.m_dataPackets.AddFirst(p);
                                                     }
                                                 } else if (packetType == msg_sys_OpenHandshake) {
                                                     if (c.state == ConnectionImpl.state_pending) {
@@ -512,9 +560,8 @@ public static class RTP4 {
         /// Returns true if the packet can be sent
         /// </summary>
         public bool CanTrySend() {
-            //if (packetUID == 0) { return true; }// callbacks can always be sent
+            if (packetUID == 50) { return true; }// unreliable packets can always be sent, but only once
             if (m_sendsLeft <= 0) {
-                //if (OnTransmissionFailure != null) { OnTransmissionFailure.Invoke(this); }
                 OnTransmissionFailure.Invoke(this);
                 return false;
             }
@@ -525,8 +572,7 @@ public static class RTP4 {
         /// Signals that the packet has been attempted to be sent
         /// </summary>
         public void OnTrySend() {
-            if (packetUID == 0) {// callbacks are always deleted on send
-                                 //if (OnTransmissionFailure != null) { OnTransmissionFailure.Invoke(this); }
+            if (packetUID == 0 || packetUID == 50) {// callbacks and unreliable packets are always deleted on send
                 OnTransmissionFailure.Invoke(this);
             } else {
                 m_lastSendTimestamp = CurrentTime;
