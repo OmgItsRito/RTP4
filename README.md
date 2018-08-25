@@ -149,17 +149,15 @@ This section contains detailed explanation on how the protocol works internally.
 The protocol is managed by three main modules which carry out tasks of message management (storing, dispatching) and data tracking (detecting that data is delivered or not).
 
 #### 1.1 Static Connection (StaticConnection)
-This object is responsible for dispatching (at the moment) only connection shutdown messages. After `IConnection.Close()` method is invoked the connection is marked as closed, all its internal states are cleared and the static connection enqueues the shutdown message for that connection's target.
+This object is responsible for dispatching (at the moment) only connection shutdown messages. After `IConnection.Close()` method is invoked the connection is marked as closed, all its internal states are cleared and the static connection enqueues the shutdown message for that connection's target. This object is always stored in the `RTP4.m_connection` static list at index 0.
 
-SCO is always stored in the `RTP4.m_connection` static list at index 0.
-
-Packet Sending: Dumps maximal amount of enqueued packets
+Packet Sending Mechanics: Dumps maximal amount of enqueued packets
 
 #### 1.2 Connection Instance (ConnectionImpl)
 This is the class that implements `IConnection` interface and exposes the related properties. As well as that it stores all related state information: packet tracking numbers (outgoing & incoming) and connection state (pending, open, closed).
 The class extends `StaticConnection` to inherit the `m_dataPackets` list, and defines its own `m_callbackPackets` list.
 
-Packet Sending: Sends at most one enqueued packet, and dumps maximal amount of callback packets.
+Packet Sending Mechanics: Sends at most one enqueued packet, and dumps maximal amount of callback packets.
 
 #### 1.3 Packet Instance (Packet)
 ##### Packet Tracking
@@ -169,9 +167,7 @@ This number is used during the packet parsing to ensure that the target connecti
 
 Packets can also be sent without tracking, in which case they will be only dispatched once and then be removed from the queue without waiting (or expecting) any recieve confirmation callback from the target.
 
-In other cases it is used a packet type identifier (most system messages have uid = 1).
-
-Packet numbers are always stored as three digits, and once the number reaches 999, the next uid is looped back to 100.
+Packet numbers are always stored as three digits, and in the tracked case once the number reaches 999, the next uid is looped back to 100.
 
 ##### Packet Types
 There is only one packet class, yet there are several different types of packets which are treated differently by the connections and by packet management logic.
@@ -182,7 +178,7 @@ There is only one packet class, yet there are several different types of packets
 - Data Packet
   - Used for transmitting tracked & untracked packets of custom data
 - Callback Packet
-  - Contains the uid of a packet which was delivered
+  - Contains the uid of a packet which was delivered, always has a uid value of 0
 
 ##### Packet Structure
 Each packet contains the sender & target ids, channel id and the packet data.
